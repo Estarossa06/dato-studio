@@ -47,8 +47,12 @@ function App() {
   const [progress, setProgress] = useState<number | null>(null)
   const [progressLabel, setProgressLabel] = useState('')
   const [dragging, setDragging] = useState(false)
-  const [deviceMemory] = useState(getDeviceMemory)
+  const [deviceMemory, setDeviceMemory] = useState<number | undefined>(undefined)
   const csvLimitBytes = csvLimitForDevice(deviceMemory)
+
+  useEffect(() => {
+    setDeviceMemory(getDeviceMemory())
+  }, [])
 
   useEffect(() => () => {
     workerRef.current?.terminate()

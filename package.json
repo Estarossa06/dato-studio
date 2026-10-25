@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/prerender.mjs",
     "test": "vitest run",
     "bench:csv": "node --expose-gc scripts/benchmark-csv-memory.mjs",
     "smoke:browser": "node scripts/browser-smoke.mjs",

@@ -1,2 +1,3 @@
 User-agent: *
 Allow: /
+Sitemap: https://dato-studio.pages.dev/sitemap.xml

@@ -182,6 +182,9 @@ try {
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: 'window.confirm = () => true; Object.defineProperty(navigator, "deviceMemory", { configurable: true, value: 8 })' })
   await cdp('Page.navigate', { url: 'http://127.0.0.1:5173/' })
   await waitFor("document.querySelector('h1')?.innerText.includes('Limpia archivos')")
+  await waitFor("document.body.innerText.includes('50.0 MB')")
+  const initialLanding = await evaluate("({h1Count:document.querySelectorAll('#root h1').length,title:document.querySelector('title')?.innerText,description:document.querySelector('meta[name=description]')?.content,canonical:document.querySelector('link[rel=canonical]')?.href,rootText:document.querySelector('#root')?.innerText || ''})")
+  if (initialLanding.h1Count !== 1 || initialLanding.title !== 'Limpiar archivos CSV y Excel online | Dato Studio' || initialLanding.canonical !== 'https://dato-studio.pages.dev/' || !initialLanding.description?.includes('Limpia archivos CSV y Excel') || !initialLanding.rootText.includes('CSV, TXT o TSV') || !initialLanding.rootText.includes('Procesamiento local')) throw new Error(`La portada prerenderizada o hidratada no coincide: ${JSON.stringify(initialLanding)}`)
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
   await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 })
   await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 })
@@ -312,7 +315,7 @@ try {
   if (desktop.scrollWidth > desktop.viewport) throw new Error(`La página de escritorio desborda el viewport: ${JSON.stringify(desktop)}`)
   if (externalRequests.length) throw new Error(`Se detectaron solicitudes externas: ${externalRequests.join(', ')}`)
   if (consoleErrors.length) throw new Error(`Errores en consola: ${consoleErrors.join(' | ')}`)
-  console.log(JSON.stringify({ browser: version.Browser, keyboardFocus, invalidExtension: 'ok', extensionMismatch: 'ok', malformedXlsx: 'ok', cancellation: cancellationState, csvPreview: 'ok', trimUndo: 'ok', safeCsvExport: 'ok', largeCsv: browserLargeResults, csvAtLimit: { bytes: atLimitCsv.bytes, rows: atLimitCsv.rows, processed: atLimitSummary.includes(`${atLimitCsv.rows} filas`) }, csvOverLimit: { bytes: csvOverLimit.bytes, rejected: 'ok' }, oversized100mbRejected: { bytes: oversizeCsv.bytes, message: 'ok' }, xlsxSizes: xlsxSizeResults, xlsxOverLimit: { bytes: 10 * 1024 * 1024 + 1, rejected: 'ok' }, numericPrecisionWarning: numericPrecisionWarning, textIdentifier: textualIdentifier, xlsxSheetSelection: 'ok', xlsxExportRoundTrip: 'ok', mobile, narrow, desktop, externalRequests, consoleErrors }, null, 2))
+  console.log(JSON.stringify({ browser: version.Browser, initialLanding, keyboardFocus, invalidExtension: 'ok', extensionMismatch: 'ok', malformedXlsx: 'ok', cancellation: cancellationState, csvPreview: 'ok', trimUndo: 'ok', safeCsvExport: 'ok', largeCsv: browserLargeResults, csvAtLimit: { bytes: atLimitCsv.bytes, rows: atLimitCsv.rows, processed: atLimitSummary.includes(`${atLimitCsv.rows} filas`) }, csvOverLimit: { bytes: csvOverLimit.bytes, rejected: 'ok' }, oversized100mbRejected: { bytes: oversizeCsv.bytes, message: 'ok' }, xlsxSizes: xlsxSizeResults, xlsxOverLimit: { bytes: 10 * 1024 * 1024 + 1, rejected: 'ok' }, numericPrecisionWarning: numericPrecisionWarning, textIdentifier: textualIdentifier, xlsxSheetSelection: 'ok', xlsxExportRoundTrip: 'ok', mobile, narrow, desktop, externalRequests, consoleErrors }, null, 2))
 } finally {
   socket?.close()
   if (browser.exitCode === null) {
