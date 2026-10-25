@@ -138,6 +138,12 @@ export function isFormulaRisk(value: string): boolean {
   return /^[\t\r\n ]*[=+\-@]/.test(value)
 }
 
+export function countFormulaRisks(rows: CsvRow[]): number {
+  let count = 0
+  for (const row of rows) for (const cell of row) if (isFormulaRisk(cell)) count++
+  return count
+}
+
 export function neutralizeFormulaValue(value: string): string {
   return isFormulaRisk(value) ? `'${value}` : value
 }

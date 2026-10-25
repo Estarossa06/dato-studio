@@ -3,7 +3,15 @@ import { createWriteStream } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import Papa from 'papaparse'
+import ts from 'typescript'
+
+const cleanModule = { exports: {} }
+const cleanSource = await readFile(new URL('../src/lib/clean.ts', import.meta.url), 'utf8')
+const cleanJavaScript = ts.transpile(cleanSource, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 })
+runInNewContext(cleanJavaScript, { module: cleanModule, exports: cleanModule.exports })
+const { analyzeDocument, previewRules, EMPTY_RULES } = cleanModule.exports
 
 const sizes = process.argv.slice(2).map(Number).filter((size) => Number.isFinite(size) && size > 0)
 if (!sizes.length) sizes.push(10, 25, 50)
@@ -40,8 +48,6 @@ try {
     const text = await readFile(path, 'utf8')
     const parseStart = performance.now()
     const rows = []
-    const seen = new Set()
-    let duplicates = 0
     let peakRss = process.memoryUsage().rss
     Papa.parse(text, {
       chunkSize: 1024 * 1024,
@@ -58,45 +64,36 @@ try {
     if (/[\r\n]$/.test(text) && rows.at(-1)?.length === 1 && rows.at(-1)?.[0] === '') rows.pop()
     const parsedCount = rows.length
     const parseDoneActual = performance.now()
-    let emptyRows = 0
-    let emptyCells = 0
-    let edgeSpaces = 0
-    let ambiguousValues = 0
     let formulaLike = 0
-    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-      const row = rows[rowIndex]
-      if (row.every((cell) => cell === '')) emptyRows++
-      const key = JSON.stringify(row)
-      if (seen.has(key)) duplicates++
-      else seen.add(key)
-      for (const cell of row) {
-        if (cell === '') emptyCells++
-        if (cell !== cell.trim()) edgeSpaces++
-        if (/^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$/.test(cell.trim()) || /^\d+[.,]\d+$/.test(cell.trim())) ambiguousValues++
-        if (/^[\t\r\n ]*[=+\-@]/.test(cell)) formulaLike++
-      }
-      if (rowIndex < 30) row.map((cell) => cell)
-    }
+    const analysisStart = performance.now()
+    const document = { rows, expectedWidth: 3, originalHeaders: ['id', 'codigo', 'nombre'] }
+    const analysis = analyzeDocument(document)
+    for (const row of rows) for (const cell of row) if (/^[\t\r\n ]*[=+\-@]/.test(cell)) formulaLike++
+    const diagnosticsDone = performance.now()
+    const previewStart = performance.now()
+    const preview = previewRules(document, { ...EMPTY_RULES, trim: true, trimColumns: [1] }, 30)
+    const previewSeconds = (performance.now() - previewStart) / 1000
     peakRss = Math.max(peakRss, process.memoryUsage().rss)
-    const done = performance.now()
     console.log(JSON.stringify({
       targetMB: sizeMb,
       fileMB: +(fixture.bytes / 1024 / 1024).toFixed(2),
       rowsWritten: fixture.rows,
       rowsParsed: parsedCount,
-      duplicates,
-      emptyRows,
-      emptyCells,
-      edgeSpaces,
-      ambiguousValues,
+      duplicates: analysis.duplicateRows,
+      emptyRows: analysis.emptyRows,
+      emptyCells: analysis.emptyCells,
+      edgeSpaces: analysis.edgeSpaces,
+      ambiguousValues: analysis.ambiguousValues,
       formulaLike,
+      previewRows: preview.rows.length,
+      previewChangedCells: preview.changedCells,
       fixtureAndReadSeconds: +((parseStart - start) / 1000).toFixed(2),
       parseSeconds: +((parseDoneActual - parseStart) / 1000).toFixed(2),
-      diagnosticsSeconds: +((done - parseDoneActual) / 1000).toFixed(2),
+      diagnosticsSeconds: +((diagnosticsDone - analysisStart) / 1000).toFixed(2),
+      previewSeconds: +previewSeconds.toFixed(2),
       peakRssMB: +(peakRss / 1024 / 1024).toFixed(0),
     }))
     rows.length = 0
-    seen.clear()
   }
 } finally {
   await rm(directory, { recursive: true, force: true })

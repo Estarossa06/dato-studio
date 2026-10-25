@@ -138,7 +138,8 @@ try {
       if (message.error) callbacks.reject(new Error(`${callbacks.method}: ${message.error.message}`))
       else callbacks.resolve(message.result)
     } else if (message.method === 'Runtime.exceptionThrown') {
-      consoleErrors.push(message.params.exceptionDetails.text)
+      const details = message.params.exceptionDetails
+      consoleErrors.push(`${details.text}: ${details.exception?.description ?? ''}`)
     } else if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error') {
       consoleErrors.push(message.params.entry.text)
     } else if (message.method === 'Network.requestWillBeSent') {
@@ -209,11 +210,33 @@ try {
   await waitFor("document.body.innerText.includes('browser.csv') && document.body.innerText.includes('2 filas')")
   const csvPreview = await evaluate("document.querySelector('.data-table tbody')?.innerText || ''")
   if (!csvPreview.includes('000742') || !csvPreview.includes('Muñoz')) throw new Error(`La vista previa CSV no coincide: ${csvPreview}`)
+  const columnDiagnostics = await evaluate("document.querySelector('.diagnostic-table tbody')?.innerText || ''")
+  if (!columnDiagnostics.includes('nombre') || !columnDiagnostics.includes('1')) throw new Error(`El diagnóstico por columna no identifica los espacios en nombre: ${columnDiagnostics}`)
+  await evaluate("(() => { const input = document.querySelector('input[aria-label=\"Buscar en todas las filas\"]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, '@nombre'); input.dispatchEvent(new Event('input', { bubbles: true })); return true })()")
+  await waitFor("document.querySelector('.data-table tbody')?.innerText.includes('000743')")
+  await evaluate("(() => { const select = document.querySelector('select[aria-label=\"Columna de búsqueda\"]'); const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; setter.call(select, '0'); select.dispatchEvent(new Event('change', { bubbles: true })); return true })()")
+  await waitFor("document.querySelector('.search-status')?.innerText.includes('Sin coincidencias')")
+  await evaluate("(() => { const select = document.querySelector('select[aria-label=\"Columna de búsqueda\"]'); const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; setter.call(select, '2'); select.dispatchEvent(new Event('change', { bubbles: true })); return true })()")
+  await waitFor("document.querySelector('.data-table tbody')?.innerText.includes('000743')")
+  await clickByText('button', 'Limpiar búsqueda')
+  await waitFor("document.querySelector('.data-table tbody')?.innerText.includes('000742')")
+  await evaluate("(() => { const select = document.querySelector('select[aria-label=\"Columna de búsqueda\"]'); const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; setter.call(select, 'all'); select.dispatchEvent(new Event('change', { bubbles: true })); return true })()")
+  await evaluate("(() => { const input = document.querySelector('input[aria-label=\"Buscar en todas las filas\"]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, 'Muñoz'); input.dispatchEvent(new Event('input', { bubbles: true })); return true })()")
+  await waitFor("document.querySelector('.search-status')?.innerText.includes('de 1')")
+  await clickByText('button', 'Abrir otro archivo')
+  await upload(csvPath)
+  await waitFor("document.body.innerText.includes('browser.csv') && document.body.innerText.includes('2 filas')")
+  const resetSearch = await evaluate("({query:document.querySelector('input[aria-label=\"Buscar en todas las filas\"]')?.value,column:document.querySelector('select[aria-label=\"Columna de búsqueda\"]')?.value})")
+  if (resetSearch.query !== '' || resetSearch.column !== 'all') throw new Error(`La búsqueda anterior sobrevivió al abrir un documento nuevo: ${JSON.stringify(resetSearch)}`)
   await clickByText('label.rule-row', 'Recortar espacios')
   await waitFor("document.querySelector('.data-table .after-value')?.innerText === 'Muñoz'")
   const trimmed = await evaluate("document.querySelector('.data-table .after-value')?.innerText || ''")
   if (trimmed !== 'Muñoz') throw new Error('La vista previa no muestra el recorte esperado.')
+  await evaluate("(() => { const input = document.querySelector('input[aria-label=\"Buscar en todas las filas\"]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, ' '); input.dispatchEvent(new Event('input', { bubbles: true })); return true })()")
+  await waitFor("document.querySelector('.search-status')?.innerText.includes('Sin coincidencias')")
   await clickByText('button', 'Deshacer último cambio')
+  await waitFor("document.querySelector('.search-status')?.innerText.includes('de 1')")
+  await clickByText('button', 'Limpiar búsqueda')
   await waitFor("document.querySelector('.data-table tbody')?.innerText.includes(' Muñoz ')")
   await evaluate("document.querySelector('.safe-option input')?.click()")
   await waitFor("document.querySelector('.safe-option input')?.checked === true")
@@ -241,6 +264,15 @@ try {
     const summary = await evaluate("document.querySelector('.file-strip small')?.innerText || ''")
     const actualRows = Number(summary.match(/([\d.,]+) filas/)?.[1]?.replace(/\D/g, ''))
     if (actualRows !== item.rows) throw new Error(`El CSV de ${item.size} MB perdió filas: esperado ${item.rows}, obtenido ${actualRows}. Resumen: ${summary}`)
+    if (!browserLargeResults.length) {
+      await evaluate("(() => { const input = document.querySelector('input[aria-label=\"Buscar en todas las filas\"]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, 'Muñoz registro 50000'); input.dispatchEvent(new Event('input', { bubbles: true })); return true })()")
+      await waitFor("document.querySelector('.data-table tbody')?.innerText.includes('Muñoz registro 50000')", 60000)
+      const searchedRow = await evaluate("document.querySelector('.data-table tbody')?.innerText || ''")
+      if (!searchedRow.includes('50000')) throw new Error(`La búsqueda global no encontró una fila posterior a la vista previa: ${searchedRow}`)
+      await clickByText('button', 'Limpiar búsqueda')
+      await waitFor("document.querySelector('.data-table tbody')?.innerText.includes('Muñoz registro 0')")
+    }
+    if (!browserLargeResults.length && await evaluate("!!document.querySelector('.safe-option')")) throw new Error('El riesgo de fórmulas del documento anterior siguió visible al abrir un CSV nuevo.')
     browserLargeResults.push({ sizeMB: +(item.bytes / 1024 / 1024).toFixed(2), rows: item.rows, processSeconds: +((Date.now() - started) / 1000).toFixed(2) })
   }
 
@@ -315,7 +347,7 @@ try {
   if (desktop.scrollWidth > desktop.viewport) throw new Error(`La página de escritorio desborda el viewport: ${JSON.stringify(desktop)}`)
   if (externalRequests.length) throw new Error(`Se detectaron solicitudes externas: ${externalRequests.join(', ')}`)
   if (consoleErrors.length) throw new Error(`Errores en consola: ${consoleErrors.join(' | ')}`)
-  console.log(JSON.stringify({ browser: version.Browser, initialLanding, keyboardFocus, invalidExtension: 'ok', extensionMismatch: 'ok', malformedXlsx: 'ok', cancellation: cancellationState, csvPreview: 'ok', trimUndo: 'ok', safeCsvExport: 'ok', largeCsv: browserLargeResults, csvAtLimit: { bytes: atLimitCsv.bytes, rows: atLimitCsv.rows, processed: atLimitSummary.includes(`${atLimitCsv.rows} filas`) }, csvOverLimit: { bytes: csvOverLimit.bytes, rejected: 'ok' }, oversized100mbRejected: { bytes: oversizeCsv.bytes, message: 'ok' }, xlsxSizes: xlsxSizeResults, xlsxOverLimit: { bytes: 10 * 1024 * 1024 + 1, rejected: 'ok' }, numericPrecisionWarning: numericPrecisionWarning, textIdentifier: textualIdentifier, xlsxSheetSelection: 'ok', xlsxExportRoundTrip: 'ok', mobile, narrow, desktop, externalRequests, consoleErrors }, null, 2))
+  console.log(JSON.stringify({ browser: version.Browser, initialLanding, keyboardFocus, invalidExtension: 'ok', extensionMismatch: 'ok', malformedXlsx: 'ok', cancellation: cancellationState, csvPreview: 'ok', columnDiagnostics: 'ok', trimUndo: 'ok', safeCsvExport: 'ok', largeCsv: browserLargeResults, csvAtLimit: { bytes: atLimitCsv.bytes, rows: atLimitCsv.rows, processed: atLimitSummary.includes(`${atLimitCsv.rows} filas`) }, csvOverLimit: { bytes: csvOverLimit.bytes, rejected: 'ok' }, oversized100mbRejected: { bytes: oversizeCsv.bytes, message: 'ok' }, xlsxSizes: xlsxSizeResults, xlsxOverLimit: { bytes: 10 * 1024 * 1024 + 1, rejected: 'ok' }, numericPrecisionWarning: numericPrecisionWarning, textIdentifier: textualIdentifier, xlsxSheetSelection: 'ok', xlsxExportRoundTrip: 'ok', mobile, narrow, desktop, externalRequests, consoleErrors }, null, 2))
 } finally {
   socket?.close()
   if (browser.exitCode === null) {

@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
 
 import Papa from 'papaparse'
-import { exportCsvChunks, hasParserTerminalRow, isFormulaRisk, neutralizeFormulaValue, guessDelimiter, type CsvDocument, type Delimiter } from '../lib/csv'
-import { analyzeDocument, initialRulesForDocument, iterateCleanRows, previewRules, type CleanRules } from '../lib/clean'
+import { countFormulaRisks, exportCsvChunks, hasParserTerminalRow, isFormulaRisk, neutralizeFormulaValue, guessDelimiter, type CsvDocument, type Delimiter } from '../lib/csv'
+import { analyzeDocument, initialRulesForDocument, iterateCleanRows, previewRules, searchCleanRows, type CleanRules } from '../lib/clean'
 import { csvLimitForDevice, MAX_XLSX_BYTES } from '../lib/limits'
 
 interface ParseRequest {
@@ -22,17 +22,28 @@ interface ExportRequest {
   safe?: boolean
 }
 
+interface SearchRequest {
+  type: 'search'
+  requestId: number
+  query: string
+  columnIndex: number | null
+  offset: number
+  limit: number
+  caseSensitive?: boolean
+}
+
 interface ComputeRequest {
   type: 'set-rules'
   requestId: number
   rules: CleanRules
 }
 
-type Request = ParseRequest | ExportRequest | ComputeRequest
+type Request = ParseRequest | ExportRequest | SearchRequest | ComputeRequest
 
 let activeDocument: CsvDocument | null = null
 let activeRules: CleanRules | null = null
 let activeAnalysis: ReturnType<typeof analyzeDocument> | null = null
+let activeFormulaRiskCount = 0
 
 function createPayload(requestId: number, document: CsvDocument, rules: CleanRules) {
   const analysis = activeAnalysis ?? analyzeDocument(document)
@@ -45,14 +56,12 @@ function createPayload(requestId: number, document: CsvDocument, rules: CleanRul
     rows: document.rows.slice(0, 30),
     xlsxCells: document.xlsxCells?.slice(0, 30),
   }
-  let formulaRiskCount = result.headers.filter(isFormulaRisk).length
-  for (const row of document.rows) for (const cell of row) if (isFormulaRisk(cell)) formulaRiskCount++
   return {
     type: 'ready', requestId, document: viewDocument,
     analysis: { ...analysis, widthCounts: undefined },
     result,
     rules,
-    formulaRiskCount,
+    formulaRiskCount: activeFormulaRiskCount + result.headers.filter(isFormulaRisk).length,
   }
 }
 
@@ -60,6 +69,10 @@ self.addEventListener('message', async (event: MessageEvent<Request>) => {
   const message = event.data
   try {
     if (message.type === 'parse') {
+      activeDocument = null
+      activeRules = null
+      activeAnalysis = null
+      activeFormulaRiskCount = 0
       const extension = message.file.name.toLowerCase().split('.').pop()
       const isWorkbook = extension === 'xlsx'
       if (!isWorkbook && !['csv', 'txt', 'tsv'].includes(extension ?? '')) throw new Error('Este flujo admite CSV, TXT, TSV y XLSX.')
@@ -86,6 +99,7 @@ self.addEventListener('message', async (event: MessageEvent<Request>) => {
         activeDocument = document
         activeRules = initialRulesForDocument(document)
         activeAnalysis = analyzeDocument(document)
+        activeFormulaRiskCount = countFormulaRisks(document.rows)
         self.postMessage({ type: 'progress', requestId: message.requestId, progress: 90, label: 'Calculando el diagnóstico…' })
         self.postMessage({ ...createPayload(message.requestId, document, activeRules), delimiterAmbiguous: false })
         return
@@ -149,11 +163,30 @@ self.addEventListener('message', async (event: MessageEvent<Request>) => {
           activeDocument = document
           activeRules = initialRulesForDocument(document)
           activeAnalysis = analyzeDocument(document)
+          activeFormulaRiskCount = countFormulaRisks(document.rows)
           self.postMessage({ type: 'progress', requestId: message.requestId, progress: 99, label: 'Calculando el diagnóstico…' })
           self.postMessage({ ...createPayload(message.requestId, document, activeRules), delimiterAmbiguous: message.delimiter === undefined && guess.ambiguous })
         },
         error(error) {
           self.postMessage({ type: 'failure', requestId: message.requestId, message: error.message || 'No se pudo leer el CSV.' })
+        },
+      })
+      return
+    }
+
+    if (message.type === 'search') {
+      if (!activeDocument || !activeRules) throw new Error('La sesión de archivo ya no está disponible. Impórtalo de nuevo.')
+      self.postMessage({ type: 'progress', requestId: message.requestId, progress: 1, label: 'Buscando en todas las filas…' })
+      const result = searchCleanRows(activeDocument, activeRules, message.query, message.columnIndex, message.offset, message.limit, message.caseSensitive)
+      self.postMessage({
+        type: 'search-results',
+        requestId: message.requestId,
+        search: {
+          ...result,
+          rows: result.rows.map((row) => ({
+            ...row,
+            precisionWarnings: activeDocument!.xlsxCells?.[row.rowIndex]?.map((cell) => Boolean(cell.precisionWarning)) ?? [],
+          })),
         },
       })
       return

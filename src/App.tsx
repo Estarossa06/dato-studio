@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
-import { EMPTY_RULES, type CleanResult, type CleanRules } from './lib/clean'
+import { EMPTY_RULES, type CleanResult, type CleanRules, type CleanSearchResult } from './lib/clean'
 import { DELIMITERS, type CsvDocument, type Delimiter } from './lib/csv'
 import { csvLimitForDevice, fileLimitForDevice } from './lib/limits'
 
 const PREVIEW_ROWS = 30
+const SEARCH_PAGE_SIZE = 30
 const MB = 1024 * 1024
 
-type Analysis = { rowCount: number; columnCount: number; emptyCells: number; emptyRows: number; duplicateRows: number; edgeSpaces: number; emptyHeaders: number; duplicateHeaders: number; irregularRows: number; ambiguousValues: number }
-type WorkerPayload = { type: string; requestId: number; document?: CsvDocument; analysis?: Analysis; result?: CleanResult; rules?: CleanRules; formulaRiskCount?: number; delimiterAmbiguous?: boolean; blob?: Blob; buffer?: ArrayBuffer; message?: string; progress?: number; label?: string }
+type Analysis = { rowCount: number; columnCount: number; emptyCells: number; emptyRows: number; duplicateRows: number; edgeSpaces: number; emptyHeaders: number; duplicateHeaders: number; irregularRows: number; ambiguousValues: number; byColumn: { index: number; emptyCells: number; edgeSpaces: number; ambiguousValues: number }[] }
+type SearchResponse = Omit<CleanSearchResult, 'rows'> & { rows: Array<CleanSearchResult['rows'][number] & { precisionWarnings: boolean[] }> }
+type SearchView = { query: string; columnIndex: number | null; caseSensitive: boolean; offset: number; result: SearchResponse }
+type WorkerPayload = { type: string; requestId: number; document?: CsvDocument; analysis?: Analysis; result?: CleanResult; search?: SearchResponse; rules?: CleanRules; formulaRiskCount?: number; delimiterAmbiguous?: boolean; blob?: Blob; buffer?: ArrayBuffer; message?: string; progress?: number; label?: string }
 
 function formatBytes(bytes: number) {
   return bytes < MB ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / MB).toFixed(1)} MB`
@@ -31,6 +34,13 @@ function App() {
   const [file, setFile] = useState<File | null>(null)
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [cleaned, setCleaned] = useState<CleanResult | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchColumnIndex, setSearchColumnIndex] = useState<number | null>(null)
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false)
+  const [searchOffset, setSearchOffset] = useState(0)
+  const [searchPending, setSearchPending] = useState(false)
+  const [searchView, setSearchView] = useState<SearchView | null>(null)
+  const [searchError, setSearchError] = useState('')
   const [formulaRiskCount, setFormulaRiskCount] = useState(0)
   const [delimiterAmbiguous, setDelimiterAmbiguous] = useState(false)
   const [delimiter, setDelimiter] = useState<Delimiter>(',')
@@ -58,6 +68,15 @@ function App() {
     workerRef.current?.terminate()
     workerRef.current = null
   }, [])
+
+  useEffect(() => {
+    if (!searchPending || busy || !document || searchQuery === '') return
+    const timeout = window.setTimeout(() => {
+      setSearchPending(false)
+      void runSearch(searchQuery, searchColumnIndex, searchOffset, searchCaseSensitive)
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [busy, document, rules, searchCaseSensitive, searchColumnIndex, searchOffset, searchPending, searchQuery])
 
   function ensureWorker() {
     if (!workerRef.current) workerRef.current = new Worker(new URL('./workers/file.worker.ts', import.meta.url), { type: 'module' })
@@ -94,7 +113,7 @@ function App() {
           finish(() => reject(new Error(message.message ?? 'No se pudo procesar el archivo.')))
           return
         }
-        if (['ready', 'exported'].includes(message.type)) finish(() => resolve(message))
+        if (['ready', 'exported', 'search-results'].includes(message.type)) finish(() => resolve(message))
       }
       worker.onerror = (event) => finish(() => reject(new Error(event.message || 'El proceso en segundo plano se detuvo inesperadamente.')))
       worker.postMessage({ ...payload, requestId })
@@ -105,6 +124,40 @@ function App() {
     cancelRef.current?.()
     workerRef.current?.terminate()
     workerRef.current = null
+  }
+
+  async function runSearch(query: string, columnIndex: number | null, offset: number, caseSensitive: boolean) {
+    if (!query || !document) return
+    setBusy(true)
+    setProgress(null)
+    setProgressLabel('Buscando en todas las filas…')
+    setSearchError('')
+    try {
+      const response = await requestWorker({ type: 'search', query, columnIndex, offset, limit: SEARCH_PAGE_SIZE, caseSensitive })
+      if (!response.search) throw new Error('El buscador no devolvió una página válida.')
+      setSearchView({ query, columnIndex, caseSensitive, offset, result: response.search })
+      if (offset > 0 && offset >= response.search.totalMatches) {
+        const lastOffset = Math.max(0, Math.floor((response.search.totalMatches - 1) / SEARCH_PAGE_SIZE) * SEARCH_PAGE_SIZE)
+        if (lastOffset !== offset) {
+          setSearchOffset(lastOffset)
+          setSearchPending(query !== '')
+        }
+      }
+    } catch (cause) {
+      if (!(cause instanceof Error && cause.message === 'Procesamiento cancelado.')) setSearchError(cause instanceof Error ? cause.message : 'No se pudo buscar en el archivo.')
+    } finally {
+      setBusy(false)
+      setProgress(null)
+      setProgressLabel('')
+    }
+  }
+
+  function clearSearch() {
+    setSearchQuery('')
+    setSearchOffset(0)
+    setSearchPending(false)
+    setSearchView(null)
+    setSearchError('')
   }
 
   async function parseFile(nextFile: File, options: { delimiter?: Delimiter; hasHeader?: boolean; sheetName?: string; fresh?: boolean } = {}) {
@@ -123,7 +176,12 @@ function App() {
       setError('El archivo está vacío. Elige un archivo con contenido.')
       return
     }
-    if (options.fresh) resetWorker()
+    if (options.fresh) {
+      resetWorker()
+      clearSearch()
+      setSearchColumnIndex(null)
+      setSearchCaseSensitive(false)
+    }
     setBusy(true)
     setProgress(0)
     setProgressLabel(isWorkbook ? 'Preparando el libro…' : 'Preparando el CSV…')
@@ -140,6 +198,7 @@ function App() {
       setDocument(response.document)
       setAnalysis(response.analysis)
       setCleaned(response.result)
+      clearSearch()
       setFormulaRiskCount(response.formulaRiskCount ?? 0)
       setDelimiterAmbiguous(response.delimiterAmbiguous ?? false)
       setDelimiter(response.document.delimiter)
@@ -156,6 +215,7 @@ function App() {
       setFile(null)
       setAnalysis(null)
       setCleaned(null)
+      clearSearch()
       if (!(cause instanceof Error && cause.message === 'Procesamiento cancelado.')) setError(cause instanceof Error ? cause.message : 'No se pudo procesar el archivo.')
     } finally {
       setBusy(false)
@@ -193,6 +253,9 @@ function App() {
     setDownloadStatus('')
     setPastRules([...pastRules, rules])
     setRules(next)
+    setSearchView(null)
+    setSearchOffset(0)
+    setSearchPending(searchQuery !== '')
     setBusy(true)
     setProgressLabel('Actualizando la vista previa…')
     try {
@@ -213,6 +276,9 @@ function App() {
     setDownloadStatus('')
     setRules(previous)
     setPastRules(pastRules.slice(0, -1))
+    setSearchView(null)
+    setSearchOffset(0)
+    setSearchPending(searchQuery !== '')
     setBusy(true)
     setProgressLabel('Deshaciendo el último cambio…')
     try {
@@ -234,6 +300,7 @@ function App() {
     setFile(null)
     setAnalysis(null)
     setCleaned(null)
+    clearSearch()
     setError('Se canceló el procesamiento. El archivo no se guardó.')
     setDownloadStatus('')
     setProgress(null)
@@ -275,6 +342,27 @@ function App() {
     const header = document.hasHeader ? (cleaned?.headers[index] ?? document.originalHeaders[index] ?? '') : ''
     return header || `Columna ${index + 1}`
   }) : []
+  const visibleSearch = searchView && searchView.query === searchQuery && searchView.columnIndex === searchColumnIndex && searchView.caseSensitive === searchCaseSensitive && searchView.offset === searchOffset ? searchView.result : null
+  const displayRows = searchQuery === ''
+    ? sourceIndexes.map((sourceIndex) => {
+      const outputIndex = keptSourceIndexes.indexOf(sourceIndex)
+      const removed = outputIndex === -1
+      return {
+        sourceIndex,
+        original: document!.rows[sourceIndex],
+        result: removed ? null : cleaned!.rows[outputIndex],
+        removed,
+        precisionWarnings: document!.xlsxCells?.[sourceIndex]?.map((cell) => Boolean(cell.precisionWarning)) ?? [],
+      }
+    })
+    : (visibleSearch?.rows ?? []).map((row) => ({
+      sourceIndex: row.rowIndex,
+      original: row.original,
+      result: row.values,
+      removed: false,
+      precisionWarnings: row.precisionWarnings,
+    }))
+  const totalSearchPages = visibleSearch ? Math.ceil(visibleSearch.totalMatches / SEARCH_PAGE_SIZE) : 0
 
   return (
     <main className="page-shell">
@@ -302,7 +390,7 @@ function App() {
       </section>}
 
       {document && analysis && cleaned && <section className="workspace">
-        <div className="workspace-heading"><div><p className="eyebrow">REVISIÓN DE ARCHIVO</p><h1 className="workspace-title">Entiende tus datos,<br /><span>paso a paso.</span></h1></div><div className="heading-actions">{busy && <button className="button-secondary" onClick={cancelOperation}>Cancelar operación</button>}<button className="button-secondary" disabled={busy} onClick={() => { resetWorker(); setDocument(null); setFile(null); setAnalysis(null); setCleaned(null); setRules(EMPTY_RULES); setPastRules([]); setError(''); setDownloadStatus('') }}>Abrir otro archivo</button></div></div>
+        <div className="workspace-heading"><div><p className="eyebrow">REVISIÓN DE ARCHIVO</p><h1 className="workspace-title">Entiende tus datos,<br /><span>paso a paso.</span></h1></div><div className="heading-actions">{busy && progressLabel !== 'Buscando en todas las filas…' && <button className="button-secondary" onClick={cancelOperation}>Cancelar operación</button>}<button className="button-secondary" disabled={busy} onClick={() => { resetWorker(); setDocument(null); setFile(null); setAnalysis(null); setCleaned(null); clearSearch(); setSearchColumnIndex(null); setSearchCaseSensitive(false); setRules(EMPTY_RULES); setPastRules([]); setError(''); setDownloadStatus('') }}>Abrir otro archivo</button></div></div>
         <div className="file-strip"><span className="file-icon">{document.format === 'xlsx' ? 'XLSX' : 'CSV'}</span><div><strong>{document.name}</strong><small>{formatBytes(document.size)} · {analysis.rowCount} filas · {analysis.columnCount} columnas</small></div><span className="local-badge">Procesado en este navegador</span></div>
         {busy && <div className="notice processing" role="status"><span>{progressLabel || 'Procesando archivo…'}</span><progress className="progress-bar" max={100} value={progress ?? undefined} /></div>}
 
@@ -318,6 +406,7 @@ function App() {
 
         <section className="panel" aria-labelledby="summary-title"><div className="panel-heading"><div><p className="eyebrow">SIN CAMBIAR EL ARCHIVO</p><h2 id="summary-title">Resumen del diagnóstico</h2></div></div>
           <div className="stat-grid"><Stat value={analysis.rowCount} label="filas de datos" /><Stat value={analysis.columnCount} label="columnas" /><Stat value={analysis.emptyCells} label="celdas vacías" /><Stat value={analysis.emptyRows} label="filas vacías" /><Stat value={analysis.duplicateRows} label="filas duplicadas" /><Stat value={analysis.edgeSpaces} label="celdas con espacios" /><Stat value={analysis.irregularRows} label="filas irregulares" /><Stat value={analysis.ambiguousValues} label="valores por revisar" /></div>
+          {analysis.byColumn.length > 0 && <div className="diagnostic-table-wrap"><table className="diagnostic-table"><caption>Hallazgos por columna</caption><thead><tr><th scope="col">Columna</th><th scope="col">Celdas vacías</th><th scope="col">Con espacios al borde</th><th scope="col">Valores por revisar</th></tr></thead><tbody>{analysis.byColumn.map((column) => <tr key={column.index}><th scope="row">{displayHeaders[column.index] ?? `Columna ${column.index + 1}`}</th><td>{column.emptyCells}</td><td>{column.edgeSpaces}</td><td>{column.ambiguousValues}</td></tr>)}</tbody></table></div>}
           {(analysis.emptyHeaders > 0 || analysis.duplicateHeaders > 0) && <p className="inline-warning">Encabezados: {analysis.emptyHeaders} vacíos y {analysis.duplicateHeaders} repetidos. Se conserva su orden y contenido original.</p>}
           {document.format === 'xlsx' && <p className="definition-note">Las fechas y los números se muestran según su valor y formato de celda; no se convierten. Las fórmulas no se ejecutan.</p>}
           <p className="definition-note">“Vacía” significa que cada celda tiene longitud cero; espacios no cuentan como vacío. “Duplicada” significa que todos sus campos coinciden exactamente, en el mismo orden. Los avisos no modifican los datos.</p>
@@ -337,10 +426,19 @@ function App() {
         </section>
 
         <section className="panel" aria-labelledby="preview-title"><div className="panel-heading"><div><p className="eyebrow">COMPARACIÓN</p><h2 id="preview-title">Antes y después</h2><p className="section-copy">{cleaned.changedCells} celdas cambian · {cleaned.removedEmpty + cleaned.removedDuplicates} filas se quitarían · Se muestran hasta {PREVIEW_ROWS} filas.</p></div></div>
+          <div className="search-controls">
+            <label className="search-input-label">Buscar en todas las filas<input type="search" aria-label="Buscar en todas las filas" value={searchQuery} disabled={busy} placeholder="Buscar texto…" onChange={(event) => { const query = event.target.value; setSearchQuery(query); setSearchOffset(0); setSearchView(null); setSearchError(''); setSearchPending(query !== '') }} /></label>
+            <label>Columna<select aria-label="Columna de búsqueda" disabled={busy} value={searchColumnIndex === null ? 'all' : String(searchColumnIndex)} onChange={(event) => { const value = event.target.value; setSearchColumnIndex(value === 'all' ? null : Number(value)); setSearchOffset(0); setSearchView(null); setSearchError(''); setSearchPending(searchQuery !== '') }}><option value="all">Todas las columnas</option>{displayHeaders.map((header, index) => <option key={index} value={index}>{header}</option>)}</select></label>
+            <label className="search-case-toggle"><input type="checkbox" disabled={busy} checked={searchCaseSensitive} onChange={(event) => { setSearchCaseSensitive(event.target.checked); setSearchView(null); setSearchError(''); setSearchPending(searchQuery !== '') }} /> Distinguir mayúsculas</label>
+            {searchQuery !== '' && <button className="button-secondary search-clear" type="button" onClick={clearSearch}>Limpiar búsqueda</button>}
+          </div>
+          {searchQuery !== '' && <div className="search-status" aria-live="polite"><p role={searchError ? 'alert' : 'status'}>{searchError || (visibleSearch ? visibleSearch.totalMatches === 0 ? 'Sin coincidencias.' : `Coincidencias ${visibleSearch.offset + 1}–${visibleSearch.offset + visibleSearch.rows.length} de ${visibleSearch.totalMatches.toLocaleString('es')} · Página ${Math.floor(visibleSearch.offset / SEARCH_PAGE_SIZE) + 1} de ${totalSearchPages}` : searchPending || progressLabel === 'Buscando en todas las filas…' ? 'Buscando en todas las filas…' : 'Preparando búsqueda…')}</p>
+            {visibleSearch && visibleSearch.totalMatches > 0 && <div className="search-pagination"><button className="button-secondary search-page-button" type="button" aria-label="Página anterior de resultados" title="Página anterior" disabled={busy || searchPending || searchOffset === 0} onClick={() => { setSearchOffset(Math.max(0, searchOffset - SEARCH_PAGE_SIZE)); setSearchView(null); setSearchPending(true) }}>←</button><button className="button-secondary search-page-button" type="button" aria-label="Página siguiente de resultados" title="Página siguiente" disabled={busy || searchPending || searchOffset + SEARCH_PAGE_SIZE >= visibleSearch.totalMatches} onClick={() => { setSearchOffset(searchOffset + SEARCH_PAGE_SIZE); setSearchView(null); setSearchPending(true) }}>→</button></div>}
+          </div>}
           <div className="table-scroll"><table className="data-table"><thead><tr><th className="row-index">Fila</th>{displayHeaders.map((_, index) => { const originalHeader = document.originalHeaders[index] ?? ''; const resultHeader = cleaned.headers[index] ?? originalHeader; return <th key={index}>{originalHeader || `Columna ${index + 1}`}{originalHeader !== resultHeader && <small>Resultado: {resultHeader || '(vacío)'}</small>}</th> })}</tr></thead><tbody>
-            {sourceIndexes.map((sourceIndex) => { const outputIndex = keptSourceIndexes.indexOf(sourceIndex); const removed = outputIndex === -1; const original = document.rows[sourceIndex]; const result = removed ? [] : cleaned.rows[outputIndex]; return <tr key={sourceIndex} className={removed ? 'removed-row' : ''}><th className="row-index">{sourceIndex + 1}</th>{displayHeaders.map((_, columnIndex) => { const before = original[columnIndex] ?? ''; const after = result[columnIndex] ?? ''; const changed = !removed && before !== after; const precisionWarning = document.xlsxCells?.[sourceIndex]?.[columnIndex]?.precisionWarning; return <td key={columnIndex} className={removed ? 'removed-cell' : changed ? 'changed-cell' : ''}><span className="before-value">{before || <i>vacío</i>}</span>{precisionWarning && <small className="cell-warning" role="note">Precisión numérica limitada; revisa el original.</small>}{removed ? <span className="after-value">Se quitaría</span> : changed && <span className="after-value">{after || <i>vacío</i>}</span>}</td> })}</tr> })}
+            {displayRows.map(({ sourceIndex, original, result, removed, precisionWarnings }) => <tr key={sourceIndex} className={removed ? 'removed-row' : ''}><th className="row-index">{sourceIndex + 1}</th>{displayHeaders.map((_, columnIndex) => { const before = original[columnIndex] ?? ''; const after = result?.[columnIndex] ?? ''; const changed = !removed && result !== null && before !== after; const precisionWarning = precisionWarnings[columnIndex]; return <td key={columnIndex} className={removed ? 'removed-cell' : changed ? 'changed-cell' : ''}><span className="before-value">{before || <i>vacío</i>}</span>{precisionWarning && <small className="cell-warning" role="note">Precisión numérica limitada; revisa el original.</small>}{removed ? <span className="after-value">Se quitaría</span> : changed && <span className="after-value">{after || <i>vacío</i>}</span>}</td> })}</tr>)}
           </tbody></table></div>
-          {analysis.rowCount > PREVIEW_ROWS && <p className="table-footnote">La vista previa está limitada a {PREVIEW_ROWS} filas; la exportación procesará todas las filas.</p>}{analysis.rowCount > 0 && keptSourceIndexes.length === 0 && <p className="empty-state">Todas las filas visibles quedarían fuera con las reglas actuales. Desactiva alguna regla para continuar.</p>}
+          {searchQuery === '' && analysis.rowCount > PREVIEW_ROWS && <p className="table-footnote">La vista previa está limitada a {PREVIEW_ROWS} filas; la exportación procesará todas las filas.</p>}{searchQuery === '' && analysis.rowCount > 0 && keptSourceIndexes.length === 0 && <p className="empty-state">Todas las filas visibles quedarían fuera con las reglas actuales. Desactiva alguna regla para continuar.</p>}
         </section>
 
         <section className="panel export-panel" aria-labelledby="export-title"><div className="panel-heading"><div><p className="eyebrow">ARCHIVO NUEVO</p><h2 id="export-title">Exporta el resultado</h2><p className="section-copy">El archivo original no se reemplaza. Se exportarán todas las filas, no solo la vista previa.</p></div></div>
