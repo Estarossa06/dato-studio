@@ -368,6 +368,11 @@ function App() {
     <main className="page-shell">
       <header className="topbar">
         <a className="wordmark" href="/" aria-label="Dato Studio, inicio"><span className="wordmark-icon" aria-hidden="true">d.</span><span>dato<span className="wordmark-light">studio</span></span></a>
+        <nav className="topnav" aria-label="Navegación principal">
+          <a href="/ayuda.html">Ayuda</a>
+          <a href="/privacidad.html">Privacidad</a>
+          <a href="/terminos.html">Términos</a>
+        </nav>
         <span className="privacy-note"><span className="privacy-dot" /> Procesamiento local</span>
       </header>
 
@@ -454,7 +459,15 @@ function App() {
         {error && <p className="error-banner" role="alert">{error}</p>}
       </section>}
 
-      <footer className="footer"><span>Dato Studio</span><span>Una forma más cuidadosa de trabajar con datos.</span></footer>
+      <footer className="footer">
+        <span>Dato Studio</span>
+        <div className="footer-links" aria-label="Información adicional">
+          <a href="/ayuda.html">Ayuda</a>
+          <a href="/privacidad.html">Privacidad</a>
+          <a href="/terminos.html">Términos</a>
+        </div>
+        <span>Una forma más cuidadosa de trabajar con datos.</span>
+      </footer>
     </main>
   )
 }

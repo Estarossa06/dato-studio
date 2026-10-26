@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Términos del servicio de Dato Studio: uso de la herramienta y responsabilidad sobre el tratamiento de archivos locales." />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://dato-studio.pages.dev/terminos.html" />
+    <title>Términos | Dato Studio</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f7f4;
+        --panel: #ffffff;
+        --line: #dde5df;
+        --text: #1c2825;
+        --muted: #64736b;
+        --green: #176c55;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      a { color: inherit; text-decoration: none; }
+      .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -0.8px; }
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 10px 10px 10px 3px;
+        background: var(--green);
+        color: #fff;
+      }
+      .nav { display: flex; gap: 16px; color: #4d5f58; font-size: 14px; }
+      main { padding-top: 32px; }
+      h1 { font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -0.08em; margin: 0 0 18px; }
+      h2 { margin: 28px 0 10px; font-size: 1.2rem; }
+      p, li { color: var(--muted); line-height: 1.7; }
+      .card {
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+      }
+      .footer {
+        margin-top: 28px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        text-align: center;
+      }
+      @media (max-width: 600px) {
+        .topbar { align-items: flex-start; flex-direction: column; }
+        .nav { flex-wrap: wrap; }
+        .card { padding: 18px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Volver a Dato Studio">
+          <span class="brand-mark" aria-hidden="true">d.</span>
+          <span>dato<span style="color:#61716b;font-weight:500">studio</span></span>
+        </a>
+        <nav class="nav" aria-label="Navegación legal">
+          <a href="/ayuda.html">Ayuda</a>
+          <a href="/privacidad.html">Privacidad</a>
+          <a href="/terminos.html">Términos</a>
+        </nav>
+      </header>
+
+      <main>
+        <div class="card">
+          <h1>Términos del servicio</h1>
+          <p>Dato Studio es una herramienta de apoyo para revisar, limpiar y exportar archivos CSV, TXT, TSV y XLSX. La aplicación se ofrece como una utilidad de análisis local y no reemplaza la revisión humana ni la validación final del contenido de los datos.</p>
+
+          <h2>Uso previsto</h2>
+          <p>El usuario es responsable de verificar que el contenido de sus archivos sea correcto, legal y adecuado para su uso. Dato Studio no asume la responsabilidad de la calidad, precisión o validez final de los datos que el usuario importa o exporta.</p>
+
+          <h2>Procesamiento local</h2>
+          <p>La mayor parte del tratamiento se realiza en el navegador del usuario. El servicio no almacena de forma centralizada el contenido del archivo ni la revisión final, salvo lo que el navegador o la plataforma de despliegue puedan gestionar por motivos técnicos.</p>
+
+          <h2>Limitaciones</h2>
+          <p>Los archivos grandes o complejos pueden requerir más memoria, tiempo de procesamiento o una revisión manual. La aplicación ofrece avisos sobre posibles riesgos, pero no puede garantizar que cada formato, estructura o caso extremo se maneje de forma idéntica en todos los navegadores o dispositivos.</p>
+
+          <h2>Cambios y exportación</h2>
+          <p>Los cambios de limpieza son reversibles dentro de la sesión de trabajo; la operación final exporta un archivo nuevo y no modifica el origen original del documento. El usuario debe revisar la salida antes de compartirla o archivarla.</p>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <p>Dato Studio. Herramienta para trabajo con datos con revisión humana y control del usuario.</p>
+      </footer>
+    </div>
+  </body>
+</html>
